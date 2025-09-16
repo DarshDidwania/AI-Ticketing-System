@@ -20,7 +20,7 @@ export const onTicketCreated = inngest.createFunction(
       // Step 1: Fetch the newly created ticket from the database.
       const ticket = await step.run("fetch-ticket", async () => {
         const ticketObject = await Ticket.findById(ticketId);
-        if (!ticket) {
+        if (!ticketObject) {
           // If the ticket doesn't exist, don't retry. It's a permanent failure.
           throw new NonRetriableError("Ticket not found in the database.");
         }
@@ -29,33 +29,43 @@ export const onTicketCreated = inngest.createFunction(
       });
 
       // Step 2: Perform AI analysis on the ticket content.
-      // This step is wrapped in its own try/catch to ensure that an AI failure
-      // (e.g., missing API key) does not stop the entire process.
-      const aiResponse = await step.run("ai-analysis", async () => {
-        try {
-          console.log("[Inngest] Attempting AI analysis...");
-          const response = await analyzeTicket(ticket);
-          if (!response) {
-            console.error("[Inngest] AI analysis returned a null or empty response. Check ai.js or Gemini API key.");
-            return null;
-          }
+      // NOTE: Run the AI analysis outside of `step.run` to avoid nesting Inngest
+      // `step.*` tooling. Some AI libraries/instrumentation may themselves use
+      // Inngest tooling which can trigger the NESTING_STEPS warning when
+      // wrapped inside a `step.run` call.
+      let aiResponse = null;
+      try {
+        console.log("[Inngest] Attempting AI analysis...");
+        const response = await analyzeTicket(ticket);
+        if (!response) {
+          console.error("[Inngest] AI analysis returned a null or empty response. Check ai.js or Gemini API key.");
+          aiResponse = null;
+        } else {
           console.log("[Inngest] AI analysis successful.");
-          return response;
-        } catch (aiError) {
-          console.error("❌ CRITICAL INGEST ERROR: The AI analysis step failed.", aiError);
-          return null; // Return null to allow processing to continue without AI data.
+          // Log parsed AI response for debugging so we can confirm its shape.
+          console.log("[Inngest] Parsed AI response:", response);
+          aiResponse = response;
         }
-      });
+      } catch (aiError) {
+        console.error("❌ CRITICAL INGEST ERROR: The AI analysis step failed.", aiError);
+        aiResponse = null; // Allow processing to continue without AI data.
+      }
 
       // Step 3: Update the ticket with data from the AI analysis if it was successful.
       if (aiResponse) {
         await step.run("update-ticket-with-ai-data", async () => {
-          await Ticket.findByIdAndUpdate(ticket._id, {
-            priority: !["low", "medium", "high"].includes(aiResponse.priority) ? "medium" : aiResponse.priority,
-            helpfulNotes: aiResponse.helpfulNotes,
-            status: "IN_PROGRESS",
-            relatedSkills: aiResponse.relatedSkills,
-          });
+          console.log("[Inngest] Updating ticket with AI data. ticket._id:", ticket._id);
+          const updateResult = await Ticket.findByIdAndUpdate(
+            ticket._id,
+            {
+              priority: !["low", "medium", "high"].includes(aiResponse.priority) ? "medium" : aiResponse.priority,
+              helpfulNotes: aiResponse.helpfulNotes,
+              status: "IN_PROGRESS",
+              relatedSkills: aiResponse.relatedSkills,
+            },
+            { new: true }
+          );
+          console.log("[Inngest] findByIdAndUpdate result:", updateResult);
           console.log("[Inngest] Updated ticket with AI data.");
         });
       }

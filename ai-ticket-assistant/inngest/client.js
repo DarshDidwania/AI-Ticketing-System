@@ -5,5 +5,5 @@ import { Inngest } from "inngest";
 // your server and prevent it from crashing.
 export const inngest = new Inngest({
   id: "ticketing-system",
-  eventKey: process.env.INNGEST_EVENT_KEY,
+  eventKey: "tV6y1sVsQ35U_pv6qkWiWcZft9gYHwvbf-PDbOze3FdJKbYAgJ8REQdRCM9D8VBKUJHvSx06lxtox5iXP5oflQ",
 });

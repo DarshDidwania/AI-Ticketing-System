@@ -1,7 +1,6 @@
 import { createAgent, gemini } from "@inngest/agent-kit";
 
 const analyzeTicket = async (ticket) => {
-  // Explicitly check for the API key to prevent crashes
   if (!process.env.GEMINI_API_KEY) {
     console.error("AI ERROR: GEMINI_API_KEY is not defined in the .env file. Skipping AI analysis.");
     return null;
@@ -55,12 +54,60 @@ Ticket information:
 - Title: ${ticket.title}
 - Description: ${ticket.description}`);
 
-  const raw = response.output[0].context;
+  // Log the full raw response first so it's visible in logs for debugging.
+  // console.log("[Inngest][AI] supportAgent.run returned:", response);
 
-  // Safer JSON parsing
+  // The agent response shape can vary depending on the SDK/version.
+  // Be defensive when extracting the raw text to avoid `Cannot read properties of undefined`.
+  let raw = null;
   try {
-    const match = raw.match(/```json\s*([\s\S]*?)\s*```/i);
-    const jsonString = match ? match[1] : raw.trim();
+    if (!response) {
+      console.error("AI ERROR: supportAgent.run returned no response", response);
+      return null;
+    }
+
+    // Common shapes: response.output is an array with objects that may contain
+    // `context`, `text`, or `content`. Try several fallbacks.
+    if (typeof response === "string") {
+      raw = response;
+    } else if (Array.isArray(response.output) && response.output.length > 0) {
+      const out0 = response.output[0];
+      if (typeof out0 === "string") raw = out0;
+      else if (out0 && typeof out0 === "object") raw = out0.context || out0.text || out0.content || JSON.stringify(out0);
+    } else if (response.output && typeof response.output === "string") {
+      raw = response.output;
+    } else if (response.content) {
+      raw = response.content;
+    } else {
+      // Last resort: stringify the whole response so we can at least try to parse any JSON inside.
+      raw = JSON.stringify(response);
+    }
+  } catch (extractErr) {
+    console.error("AI ERROR: failed to extract raw response", { response, error: extractErr.message });
+    return null;
+  }
+
+  if (!raw) {
+    console.error("AI PARSING FAILED: raw response is empty or undefined", { response });
+    return null;
+  }
+
+  // If we already have an object (rare), return it directly.
+  if (typeof raw === "object") return raw;
+
+  try {
+    // Try to extract fenced JSON first (```json ... ```), then fall back to the
+    // full trimmed string. Also attempt to extract the first JSON object block
+    // if the model added surrounding text.
+    const fencedMatch = raw.match(/```json\s*([\s\S]*?)\s*```/i);
+    let jsonString = fencedMatch ? fencedMatch[1] : raw.trim();
+
+    // If jsonString does not start with '{', try to extract the first {...} block.
+    if (!jsonString.startsWith("{")) {
+      const braceMatch = jsonString.match(/({[\s\S]*})/);
+      if (braceMatch) jsonString = braceMatch[1];
+    }
+
     return JSON.parse(jsonString);
   } catch (e) {
     console.error("AI PARSING FAILED:", { rawResponse: raw, error: e.message });

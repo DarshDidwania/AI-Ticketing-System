@@ -3,10 +3,6 @@ import jwt from "jsonwebtoken";
 import User from "../models/user.js";
 import { inngest } from "../inngest/client.js";
 
-/**
- * Handles user signup. Hashes the password, creates a new user,
- * and returns a JWT.
- */
 export const signup = async (req, res) => {
   const { email, password, skills = [] } = req.body;
   try {
@@ -18,16 +14,7 @@ export const signup = async (req, res) => {
       skills,
     });
 
-    // --- DEBUGGING STEP ---
-    // The Inngest event is temporarily disabled to isolate the core signup logic.
-    /*
-    await inngest.send({
-      name: "user.signup",
-      data: {
-        email,
-      },
-    });
-    */
+  
     console.log("Inngest event skipped for debugging.");
 
 
@@ -45,12 +32,7 @@ export const signup = async (req, res) => {
   }
 };
 
-// The rest of the login, logout, etc. functions remain the same...
 
-/**
- * Handles user login. Finds the user, compares the password,
- * and returns a JWT if successful.
- */
 export const login = async (req, res) => {
   const { email, password } = req.body;
   try {
